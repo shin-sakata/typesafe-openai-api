@@ -3,3 +3,4 @@
 /.direnv
 yarn-error.log
 *.log
+.env
