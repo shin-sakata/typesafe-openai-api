@@ -1,7 +1,7 @@
-import { it, describe } from "node:test";
-import assert from "node:assert";
 import { ChatGPT } from "../lib";
 import { env } from "./env";
+import assert from "node:assert";
+import { describe, it } from "node:test";
 
 describe("ChatGPT", () => {
   it("should create a chat completion", async () => {
