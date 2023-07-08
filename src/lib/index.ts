@@ -1,5 +1,5 @@
-import axios from "axios";
 import { Request, Response, ResponseSchema } from "./types";
+import axios from "axios";
 
 export class ChatGPT {
   constructor(private apiKey: string) {}
