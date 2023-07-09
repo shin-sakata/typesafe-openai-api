@@ -1,3 +1,4 @@
+import { repeat } from "./tuple";
 import { z } from "zod";
 
 export type Role = "system" | "user" | "assistant" | "function";
@@ -27,14 +28,14 @@ export type Model =
   | "gpt-3.5-turbo-16k"
   | "gpt-3.5-turbo-16k-0613";
 
-export type Request = {
+export type Request<N extends number> = {
   model: Model;
   messages: Message[];
+  n: N;
   functions?: FunctionDefinition[];
   function_call?: FunctionCallMode;
   temperature?: number;
   top_p?: number;
-  n?: number;
   stream?: boolean;
   stop?: string | string[];
   max_tokens?: number;
@@ -61,12 +62,16 @@ const ResponseUsageSchema = z.object({
   total_tokens: z.number(),
 });
 
-export const ResponseSchema = z.object({
-  id: z.string(),
-  object: z.literal("chat.completion"),
-  created: z.number(),
-  choices: z.array(ResponseChoiceSchema),
-  usage: ResponseUsageSchema,
-});
+export function mkResponseSchema<N extends number>(n: N) {
+  return z.object({
+    id: z.string(),
+    object: z.literal("chat.completion"),
+    created: z.number(),
+    choices: z.tuple(repeat(ResponseChoiceSchema, n)),
+    usage: ResponseUsageSchema,
+  });
+}
 
-export type Response = z.infer<typeof ResponseSchema>;
+export type Response<N extends number> = z.infer<
+  ReturnType<typeof mkResponseSchema<N>>
+>;
