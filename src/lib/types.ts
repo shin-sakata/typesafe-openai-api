@@ -1,4 +1,4 @@
-import { repeat } from "./tuple";
+import { NonEmptyArray, repeat } from "./tuple";
 import { z } from "zod";
 
 export type Role = "system" | "user" | "assistant" | "function";
@@ -7,9 +7,29 @@ export type FunctionCallMode = "none" | "auto" | { name: string };
 
 export type FunctionDefinition = {
   name: string;
-  description?: string;
-  parameters?: unknown; // JSON Schema object
+  description: string;
+  parameters: z.ZodTypeAny;
 };
+
+export type FunctionSchema<T extends FunctionDefinition> = z.ZodObject<{
+  name: z.ZodLiteral<T["name"]>;
+  arguments: T["parameters"];
+}>;
+
+export type FunctionSchemas<T extends NonEmptyArray<FunctionDefinition>> = {
+  [K in keyof T]: FunctionSchema<T[K]>;
+};
+
+export function mapFunctionSchemas<T extends NonEmptyArray<FunctionDefinition>>(
+  definitions: T,
+): FunctionSchemas<T> {
+  return definitions.map((definition) =>
+    z.object({
+      name: z.literal(definition.name),
+      arguments: definition.parameters,
+    }),
+  ) as FunctionSchemas<T>;
+}
 
 export type Message = {
   role: Role;
@@ -28,11 +48,14 @@ export type Model =
   | "gpt-3.5-turbo-16k"
   | "gpt-3.5-turbo-16k-0613";
 
-export type Request<N extends number> = {
+export type Request<
+  N extends number,
+  F extends NonEmptyArray<FunctionDefinition> = never,
+> = {
   model: Model;
   messages: Message[];
   n: N;
-  functions?: FunctionDefinition[];
+  functions: F;
   function_call?: FunctionCallMode;
   temperature?: number;
   top_p?: number;
@@ -45,16 +68,70 @@ export type Request<N extends number> = {
   user?: string;
 };
 
-const ResponseChoiceMessageSchema = z.object({
+const AssistantMessageSchema = z.object({
   role: z.literal("assistant"),
   content: z.string(),
 });
 
-const ResponseChoiceSchema = z.object({
-  index: z.number(),
-  message: ResponseChoiceMessageSchema,
-  finish_reason: z.string(),
-});
+function mkResponseChoiceMessageFunctionCallSchema<
+  T extends NonEmptyArray<FunctionDefinition>,
+>(functionDefinitions: T): z.ZodObject<{
+  role: z.ZodLiteral<"assistant">;
+  function_call: z.ZodDiscriminatedUnion<"name", FunctionSchemas<T>>;
+}> {
+  return z.object({
+    role: z.literal("assistant"),
+    function_call: z.discriminatedUnion(
+      "name",
+      mapFunctionSchemas(functionDefinitions),
+    ),
+  });
+}
+
+function mkResponseChoiceMessageSchema<
+  T extends NonEmptyArray<FunctionDefinition>,
+>(functionDefinitions: T): z.ZodUnion<
+  [
+    z.ZodObject<{
+      role: z.ZodLiteral<"assistant">;
+      content: z.ZodString;
+    }>,
+    z.ZodObject<{
+      role: z.ZodLiteral<"assistant">;
+      function_call: z.ZodDiscriminatedUnion<"name", FunctionSchemas<T>>;
+    }>,
+  ]
+> {
+  return z.union([
+    AssistantMessageSchema,
+    mkResponseChoiceMessageFunctionCallSchema(functionDefinitions),
+  ]);
+}
+
+function mkResponseChoiceSchema<T extends NonEmptyArray<FunctionDefinition>>(
+  functionDefinitions: T,
+): z.ZodObject<{
+  index: z.ZodNumber;
+  message: z.ZodUnion<
+    [
+      z.ZodObject<{
+        role: z.ZodLiteral<"assistant">;
+        content: z.ZodString;
+      }>,
+      z.ZodObject<{
+        role: z.ZodLiteral<"assistant">;
+        function_call: z.ZodDiscriminatedUnion<"name", FunctionSchemas<T>>;
+      }>,
+    ]
+  >;
+  finish_reason: z.ZodString;
+}> {
+  return z.object({
+    index: z.number(),
+    message: mkResponseChoiceMessageSchema(functionDefinitions),
+    finish_reason: z.string(),
+  });
+}
 
 const ResponseUsageSchema = z.object({
   prompt_tokens: z.number(),
@@ -62,16 +139,20 @@ const ResponseUsageSchema = z.object({
   total_tokens: z.number(),
 });
 
-export function mkResponseSchema<N extends number>(n: N) {
+export function mkResponseSchema<
+  N extends number,
+  T extends NonEmptyArray<FunctionDefinition>,
+>(n: N, functionDefinitions: T) {
   return z.object({
     id: z.string(),
     object: z.literal("chat.completion"),
     created: z.number(),
-    choices: z.tuple(repeat(ResponseChoiceSchema, n)),
+    choices: z.tuple(repeat(mkResponseChoiceSchema(functionDefinitions), n)),
     usage: ResponseUsageSchema,
   });
 }
 
-export type Response<N extends number> = z.infer<
-  ReturnType<typeof mkResponseSchema<N>>
->;
+export type Response<
+  N extends number,
+  T extends NonEmptyArray<FunctionDefinition>,
+> = z.infer<ReturnType<typeof mkResponseSchema<N, T>>>;
